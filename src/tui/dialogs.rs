@@ -57,12 +57,7 @@ pub fn draw_confirm_dialog(f: &mut Frame, title: &str, message: &str, app: &App)
 pub fn draw_info_dialog(f: &mut Frame, app: &App) {
     let area = centered_rect(70, 50, f.area());
     
-    let processes = match app.process_sort {
-        crate::app::ProcessSortMode::Cpu => app.metrics.top_processes_by_cpu(30),
-        crate::app::ProcessSortMode::Memory => app.metrics.top_processes_by_memory(30),
-        _ => app.metrics.top_processes_by_cpu(30),
-    };
-    
+    let processes = app.current_processes();
     let selected = processes.get(app.selected_process_index);
     
     let text = if let Some(proc) = selected {

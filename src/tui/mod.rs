@@ -58,7 +58,10 @@ fn run_app<B: ratatui::backend::Backend>(
                             app.exit_filter_mode();
                         }
                         crossterm::event::KeyCode::Enter => {
+                            // Exit filter mode and focus first result
                             app.filter_mode = false;
+                            app.selected_process_index = 0;
+                            app.clamp_process_selection();
                         }
                         crossterm::event::KeyCode::Backspace => {
                             app.filter_backspace();
@@ -129,8 +132,7 @@ fn run_app<B: ratatui::backend::Backend>(
                 } else if events::is_arrow_up(&key) {
                     app.move_selection_up();
                 } else if events::is_arrow_down(&key) {
-                    let max = 30; // Top 30 processes
-                    app.move_selection_down(max);
+                    app.move_selection_down();
                 } else if events::should_show_kill_dialog(&key) {
                     app.show_kill_dialog();
                 } else if events::should_show_terminate_dialog(&key) {

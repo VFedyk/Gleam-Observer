@@ -6,6 +6,7 @@ use nvml_wrapper::enum_wrappers::device::TemperatureSensor;
 
 pub struct NvidiaBackend {
     device: Device<'static>,
+    #[allow(dead_code)]
     nvml: &'static Nvml,
 }
 

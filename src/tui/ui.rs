@@ -240,7 +240,7 @@ fn draw_memory_panel(f: &mut Frame, area: Rect, app: &App) {
     let mut idx = 0;
     
     // RAM gauge
-    let ram_label = format!("{} MB / {} MB", mem_used, mem_total);
+    let _ram_label = format!("{} MB / {} MB", mem_used, mem_total);
     let ram_gauge = Gauge::default()
         .block(Block::default()
             .title(vec![
@@ -287,7 +287,7 @@ fn draw_memory_panel(f: &mut Frame, area: Rect, app: &App) {
     
     // SWAP gauge
     if swap_total > 0 {
-        let swap_label = format!("{} MB / {} MB", swap_used, swap_total);
+        let _swap_label = format!("{} MB / {} MB", swap_used, swap_total);
         let swap_gauge = Gauge::default()
             .block(Block::default()
                 .title(vec![
@@ -738,13 +738,26 @@ fn draw_trends_panel(f: &mut Frame, area: Rect, app: &App) {
 fn draw_processes_view(f: &mut Frame, app: &App) {
     use ratatui::widgets::{Table, Row, Cell};
     
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
+    let show_filter_bar = app.filter_mode || !app.filter_input.is_empty();
+
+    let constraints = if show_filter_bar {
+        vec![
+            Constraint::Length(3),  // Header
+            Constraint::Min(10),    // Process table
+            Constraint::Length(3),  // Filter/search bar (taller for visibility)
+            Constraint::Length(3),  // Footer
+        ]
+    } else {
+        vec![
             Constraint::Length(3),  // Header
             Constraint::Min(10),    // Process table
             Constraint::Length(3),  // Footer
-        ])
+        ]
+    };
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
         .split(f.area());
 
     draw_header(f, chunks[0], app);
@@ -757,30 +770,51 @@ fn draw_processes_view(f: &mut Frame, app: &App) {
         ProcessSortMode::Pid => "PID ▼",
     };
     
-    let processes = match app.process_sort {
-        ProcessSortMode::Cpu => app.metrics.top_processes_by_cpu(30),
-        ProcessSortMode::Memory => app.metrics.top_processes_by_memory(30),
-        ProcessSortMode::Name | ProcessSortMode::Pid => app.metrics.top_processes_by_cpu(30),
+    let processes = app.current_processes();
+    let total_processes = processes.len();
+    let selected = if total_processes == 0 {
+        0
+    } else {
+        app.selected_process_index.min(total_processes.saturating_sub(1))
     };
-    
-    let rows: Vec<Row> = processes.iter().enumerate().map(|(idx, p)| {
-        let style = if idx == app.selected_process_index {
-            Style::default()
-                .fg(Theme::CRUST)
-                .bg(Theme::PINK)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Theme::TEXT)
-        };
-        
-        Row::new(vec![
-            Cell::from(format!("{}", p.pid)),
-            Cell::from(p.cmd.clone()),  // Show full command instead of just name
-            Cell::from(format!("{:.1}%", p.cpu_usage)),
-            Cell::from(format!("{:.1} MB", p.memory() as f64 / 1024.0 / 1024.0)),
-        ])
-        .style(style)
-    }).collect();
+
+    // Determine how many rows can be shown inside the table area.
+    let table_height = chunks[1].height as usize;
+    let visible_rows = table_height.saturating_sub(4).max(1); // borders + header + margin
+
+    // Calculate the first row to display so the selection stays visible.
+    let start = if total_processes > visible_rows {
+        let max_start = total_processes - visible_rows;
+        let preferred_start = selected.saturating_sub(visible_rows.saturating_sub(1));
+        preferred_start.min(max_start)
+    } else {
+        0
+    };
+
+    let rows: Vec<Row> = processes
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(visible_rows)
+        .map(|(idx, p)| {
+            let style = if idx == selected {
+                Style::default()
+                    .fg(Theme::CRUST)
+                    .bg(Theme::PINK)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Theme::TEXT)
+            };
+            
+            Row::new(vec![
+                Cell::from(format!("{}", p.pid)),
+                Cell::from(p.cmd.clone()),  // Show full command instead of just name
+                Cell::from(format!("{:.1}%", p.cpu_usage)),
+                Cell::from(format!("{:.1} MB", p.memory() as f64 / 1024.0 / 1024.0)),
+            ])
+            .style(style)
+        })
+        .collect();
     
     let table = Table::new(
         rows,
@@ -810,7 +844,59 @@ fn draw_processes_view(f: &mut Frame, app: &App) {
         .style(Style::default().bg(Theme::MANTLE)));
     
     f.render_widget(table, chunks[1]);
-    draw_footer(f, chunks[2], app);
+
+    let mut footer_idx = 2;
+    if show_filter_bar {
+        draw_filter_bar(f, chunks[2], app);
+        footer_idx = 3;
+    }
+
+    draw_footer(f, chunks[footer_idx], app);
+}
+
+fn draw_filter_bar(f: &mut Frame, area: Rect, app: &App) {
+    let prompt = if app.filter_mode {
+        "[/ search] Type to filter • Enter: apply & select first • Esc: clear"
+    } else {
+        "[/ search]"
+    };
+
+    let matches = app.current_processes().len();
+    let cursor = if app.filter_mode { " █" } else { "" };
+
+    let content = vec![
+        Line::from(vec![
+            Span::styled(prompt, Style::default().fg(Theme::SUBTEXT1)),
+            Span::raw("  "),
+            Span::styled(
+                format!("Query: {}{}", app.filter_input, cursor),
+                Style::default()
+                    .fg(Theme::ROSEWATER)
+                    .bg(Theme::CRUST)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                format!("({} match{})", matches, if matches == 1 { "" } else { "es" }),
+                Style::default().fg(Theme::SUBTEXT1),
+            ),
+        ]),
+    ];
+
+    let paragraph = Paragraph::new(content)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .title("Filter")
+                .border_style(Style::default().fg(Theme::PINK))
+                .style(Style::default().bg(Theme::MANTLE)),
+        )
+        .style(Style::default().fg(Theme::TEXT));
+
+    // Clear the area to avoid artifacts from previous frames.
+    f.render_widget(ratatui::widgets::Clear, area);
+    f.render_widget(paragraph, area);
 }
 
 fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
@@ -877,6 +963,11 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                     .fg(Theme::TEAL)
                     .add_modifier(Modifier::BOLD)),
                 Span::styled(" Sort", Style::default().fg(Theme::TEXT)),
+                Span::raw("  │  "),
+                Span::styled("[/]", Style::default()
+                    .fg(Theme::PINK)
+                    .add_modifier(Modifier::BOLD)),
+                Span::styled(" Search", Style::default().fg(Theme::TEXT)),
                 Span::raw("  │  "),
                 Span::styled("[↑↓]", Style::default()
                     .fg(Theme::LAVENDER)

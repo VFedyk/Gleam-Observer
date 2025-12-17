@@ -12,6 +12,7 @@ pub struct ProcessNode {
 
 pub struct ProcessTree {
     nodes: HashMap<u32, ProcessNode>,
+    #[allow(dead_code)]
     root_pid: u32,
     render_order: Vec<(u32, usize)>, // (pid, depth)
 }

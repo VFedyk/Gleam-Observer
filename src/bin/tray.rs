@@ -1,10 +1,10 @@
+use gleam_observer::{Config, Result};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-use gleam_observer::{Config, Result};
 
 #[cfg(all(unix, feature = "systray"))]
-use tray_item::{TrayItem, IconSource};
+use tray_item::{IconSource, TrayItem};
 
 const MONITORING_INTERVAL_MS: u64 = 1000;
 const TRAY_UPDATE_INTERVAL_MS: u64 = 200;
@@ -24,12 +24,12 @@ impl TrayState {
             mem_percent: 0.0,
         }
     }
-    
+
     fn update_metrics(&mut self, cpu: f32, mem: f32) {
         self.cpu_percent = cpu;
         self.mem_percent = mem;
     }
-    
+
     fn toggle_alerts(&mut self) {
         self.alerts_paused = !self.alerts_paused;
     }
@@ -47,7 +47,7 @@ fn main() -> Result<()> {
     #[cfg(all(unix, feature = "systray"))]
     {
         let state = Arc::new(Mutex::new(TrayState::new()));
-        
+
         let state_monitor = state.clone();
         let config_clone = config.clone();
         thread::spawn(move || {
@@ -66,7 +66,7 @@ fn main() -> Result<()> {
     {
         log::error!("Systray feature not enabled. Please compile with --features systray");
         return Err(gleam_observer::error::Error::Daemon(
-            "Systray feature not enabled".to_string()
+            "Systray feature not enabled".to_string(),
         ));
     }
 
@@ -76,20 +76,20 @@ fn main() -> Result<()> {
 #[cfg(all(unix, feature = "systray"))]
 fn run_monitoring_loop(state: Arc<Mutex<TrayState>>, config: Config) -> Result<()> {
     use gleam_observer::daemon::DaemonContext;
-    
+
     let ctx = DaemonContext::new(config)?;
-    
+
     loop {
         if gleam_observer::daemon::should_stop() {
             log::info!("Monitoring loop: stop signal received");
             break;
         }
-        
+
         update_tray_state(&state, &ctx);
-        
+
         thread::sleep(Duration::from_millis(MONITORING_INTERVAL_MS));
     }
-    
+
     Ok(())
 }
 
@@ -103,24 +103,29 @@ fn update_tray_state(state: &Arc<Mutex<TrayState>>, ctx: &gleam_observer::daemon
 
 #[cfg(all(unix, feature = "systray"))]
 fn init_tray(state: Arc<Mutex<TrayState>>, _config: Config) -> Result<()> {
-    let mut tray = TrayItem::new("GleamObserver", IconSource::Resource("gleamobserver"))
-        .map_err(|e| gleam_observer::error::Error::Daemon(format!("Failed to create tray: {}", e)))?;
+    let mut tray =
+        TrayItem::new("GleamObserver", IconSource::Resource("gleamobserver")).map_err(|e| {
+            gleam_observer::error::Error::Daemon(format!("Failed to create tray: {}", e))
+        })?;
 
     let _state_dashboard = state.clone();
     tray.add_menu_item("Dashboard", move || {
         log::info!("User clicked: Dashboard");
         open_dashboard();
-    }).map_err(|e| gleam_observer::error::Error::Daemon(format!("Failed to add menu item: {}", e)))?;
+    })
+    .map_err(|e| gleam_observer::error::Error::Daemon(format!("Failed to add menu item: {}", e)))?;
 
-    tray.add_menu_item("", || {})
-        .map_err(|e| gleam_observer::error::Error::Daemon(format!("Failed to add separator: {}", e)))?;
+    tray.add_menu_item("", || {}).map_err(|e| {
+        gleam_observer::error::Error::Daemon(format!("Failed to add separator: {}", e))
+    })?;
 
     let state_status = state.clone();
     tray.add_menu_item("Show Status", move || {
         if let Ok(s) = state_status.lock() {
             gleam_observer::daemon::send_status_update(s.cpu_percent, s.mem_percent);
         }
-    }).map_err(|e| gleam_observer::error::Error::Daemon(format!("Failed to add menu item: {}", e)))?;
+    })
+    .map_err(|e| gleam_observer::error::Error::Daemon(format!("Failed to add menu item: {}", e)))?;
 
     let state_pause = state.clone();
     tray.add_menu_item("Pause Alerts", move || {
@@ -128,21 +133,25 @@ fn init_tray(state: Arc<Mutex<TrayState>>, _config: Config) -> Result<()> {
             s.toggle_alerts();
             log::info!("Alerts paused: {}", s.alerts_paused);
         }
-    }).map_err(|e| gleam_observer::error::Error::Daemon(format!("Failed to add menu item: {}", e)))?;
+    })
+    .map_err(|e| gleam_observer::error::Error::Daemon(format!("Failed to add menu item: {}", e)))?;
 
     tray.add_menu_item("Settings", || {
         log::info!("User clicked: Settings");
         open_settings();
-    }).map_err(|e| gleam_observer::error::Error::Daemon(format!("Failed to add menu item: {}", e)))?;
+    })
+    .map_err(|e| gleam_observer::error::Error::Daemon(format!("Failed to add menu item: {}", e)))?;
 
-    tray.add_menu_item("", || {})
-        .map_err(|e| gleam_observer::error::Error::Daemon(format!("Failed to add separator: {}", e)))?;
+    tray.add_menu_item("", || {}).map_err(|e| {
+        gleam_observer::error::Error::Daemon(format!("Failed to add separator: {}", e))
+    })?;
 
     tray.add_menu_item("Exit", || {
         log::info!("GleamObserver Daemon: User clicked Exit");
         gleam_observer::daemon::set_stop_flag();
         std::process::exit(0);
-    }).map_err(|e| gleam_observer::error::Error::Daemon(format!("Failed to add menu item: {}", e)))?;
+    })
+    .map_err(|e| gleam_observer::error::Error::Daemon(format!("Failed to add menu item: {}", e)))?;
 
     log::info!("Systray initialized successfully");
 
@@ -153,7 +162,7 @@ fn init_tray(state: Arc<Mutex<TrayState>>, _config: Config) -> Result<()> {
 fn run_tray_event_loop() -> Result<()> {
     loop {
         thread::sleep(Duration::from_millis(TRAY_UPDATE_INTERVAL_MS));
-        
+
         if gleam_observer::daemon::should_stop() {
             log::info!("Tray: stop signal received");
             break;
@@ -167,7 +176,7 @@ fn run_tray_event_loop() -> Result<()> {
 fn open_dashboard() {
     let home = std::env::var("HOME").unwrap_or_else(|_| String::from("/home"));
     let binary_path = format!("{}/.local/bin/gleam", home);
-    
+
     if let Err(e) = std::process::Command::new(binary_path).spawn() {
         log::error!("Failed to open dashboard: {}", e);
     }
@@ -177,8 +186,11 @@ fn open_dashboard() {
 fn open_settings() {
     let home = std::env::var("HOME").unwrap_or_else(|_| String::from("/home"));
     let config_path = format!("{}/.config/gleam-observer/config.toml", home);
-    
-    if let Err(e) = std::process::Command::new("xdg-open").arg(config_path).spawn() {
+
+    if let Err(e) = std::process::Command::new("xdg-open")
+        .arg(config_path)
+        .spawn()
+    {
         log::error!("Failed to open settings: {}", e);
     }
 }

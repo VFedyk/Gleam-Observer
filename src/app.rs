@@ -185,6 +185,9 @@ impl App {
         // Update status message (clear old ones)
         self.update_status_message();
 
+        // Keep selection within current process bounds
+        self.clamp_process_selection();
+
         Ok(())
     }
 
@@ -265,20 +268,87 @@ impl App {
         }
     }
 
-    pub fn move_selection_down(&mut self, max: usize) {
+    pub fn move_selection_down(&mut self) {
+        let max = self.process_count();
         if self.selected_process_index < max.saturating_sub(1) {
             self.selected_process_index += 1;
         }
     }
 
     pub fn get_selected_pid(&self) -> Option<u32> {
-        let processes = match self.process_sort {
-            ProcessSortMode::Cpu => self.metrics.top_processes_by_cpu(30),
-            ProcessSortMode::Memory => self.metrics.top_processes_by_memory(30),
-            ProcessSortMode::Name | ProcessSortMode::Pid => self.metrics.top_processes_by_cpu(30),
-        };
+        let processes = self.current_processes();
         
         processes.get(self.selected_process_index).map(|p| p.pid)
+    }
+
+    /// Return the list of processes currently visible in the UI,
+    /// respecting filters, the active sort order, and grouping threads
+    /// under their thread-group ID (TGID) to avoid duplicate rows.
+    pub fn current_processes(&self) -> Vec<SystemProcessInfo> {
+        let base_list = if self.filter_mode && !self.filter_input.is_empty() {
+            self.filtered_processes.clone()
+        } else {
+            self.metrics.all_processes()
+        };
+
+        // Group by TGID (thread-group / main PID). Aggregate CPU and memory.
+        let mut grouped: std::collections::HashMap<u32, SystemProcessInfo> = std::collections::HashMap::new();
+
+        for p in base_list {
+            let key = p.tgid;
+            grouped
+                .entry(key)
+                .and_modify(|agg| {
+                    agg.cpu_usage += p.cpu_usage;
+                    agg.memory_kb = agg.memory_kb.saturating_add(p.memory_kb);
+                })
+                .or_insert_with(|| SystemProcessInfo {
+                    pid: key,   // represent the group by its TGID
+                    tgid: key,
+                    name: p.name.clone(),
+                    cmd: p.cmd.clone(),
+                    cpu_usage: p.cpu_usage,
+                    memory_kb: p.memory_kb,
+                    user: p.user.clone(),
+                });
+        }
+
+        let grouped_vec: Vec<SystemProcessInfo> = grouped.into_values().collect();
+        self.sorted_processes(grouped_vec)
+    }
+
+    /// Total number of processes available for navigation.
+    pub fn process_count(&self) -> usize {
+        self.current_processes().len()
+    }
+
+    /// Ensure the selected index is valid for the current process list.
+    pub fn clamp_process_selection(&mut self) {
+        let total = self.process_count();
+        if total == 0 {
+            self.selected_process_index = 0;
+        } else if self.selected_process_index >= total {
+            self.selected_process_index = total - 1;
+        }
+    }
+
+    /// Apply the current sort mode to a process collection.
+    fn sorted_processes(&self, mut processes: Vec<SystemProcessInfo>) -> Vec<SystemProcessInfo> {
+        match self.process_sort {
+            ProcessSortMode::Cpu => {
+                processes.sort_by(|a, b| b.cpu_usage.partial_cmp(&a.cpu_usage).unwrap_or(std::cmp::Ordering::Equal));
+            }
+            ProcessSortMode::Memory => {
+                processes.sort_by(|a, b| b.memory_kb.cmp(&a.memory_kb));
+            }
+            ProcessSortMode::Name => {
+                processes.sort_by(|a, b| a.name.cmp(&b.name));
+            }
+            ProcessSortMode::Pid => {
+                processes.sort_by(|a, b| a.pid.cmp(&b.pid));
+            }
+        }
+        processes
     }
 
     pub fn show_kill_dialog(&mut self) {
@@ -415,48 +485,24 @@ impl App {
     
     /// Apply current filter to process list
     pub fn apply_filter(&mut self) {
-        if self.filter_input.is_empty() {
-            self.filtered_processes = self.metrics.all_processes();
+        let mut processes = if self.filter_input.is_empty() {
+            self.metrics.all_processes()
         } else {
             let filter_lower = self.filter_input.to_lowercase();
-            self.filtered_processes = self.metrics.all_processes()
+            self.metrics
+                .all_processes()
                 .into_iter()
                 .filter(|p| {
-                    p.name.to_lowercase().contains(&filter_lower) ||
-                    p.cmd.to_lowercase().contains(&filter_lower) ||
-                    p.pid.to_string().contains(&filter_lower)
+                    p.name.to_lowercase().contains(&filter_lower)
+                        || p.cmd.to_lowercase().contains(&filter_lower)
+                        || p.pid.to_string().contains(&filter_lower)
                 })
-                .collect();
-        }
-        
-        // Apply current sort to filtered results
-        match self.process_sort {
-            ProcessSortMode::Cpu => {
-                self.filtered_processes.sort_by(|a, b| 
-                    b.cpu_usage.partial_cmp(&a.cpu_usage).unwrap()
-                );
-            }
-            ProcessSortMode::Memory => {
-                self.filtered_processes.sort_by(|a, b| 
-                    b.memory_kb.cmp(&a.memory_kb)
-                );
-            }
-            ProcessSortMode::Name => {
-                self.filtered_processes.sort_by(|a, b| 
-                    a.name.cmp(&b.name)
-                );
-            }
-            ProcessSortMode::Pid => {
-                self.filtered_processes.sort_by(|a, b| 
-                    a.pid.cmp(&b.pid)
-                );
-            }
-        }
-        
-        // Reset selection if out of bounds
-        if self.selected_process_index >= self.filtered_processes.len() && !self.filtered_processes.is_empty() {
-            self.selected_process_index = 0;
-        }
+                .collect()
+        };
+
+        processes = self.sorted_processes(processes);
+        self.filtered_processes = processes;
+        self.clamp_process_selection();
     }
     
     /// Set status message with timestamp

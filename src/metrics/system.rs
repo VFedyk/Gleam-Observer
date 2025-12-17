@@ -1,5 +1,6 @@
 use sysinfo::{System, Process, Pid, ProcessesToUpdate};
 use std::collections::HashMap;
+use std::fs;
 
 pub struct SystemMetrics {
     system: System,
@@ -95,66 +96,14 @@ impl SystemMetrics {
     }
 
     pub fn top_processes_by_cpu(&self, limit: usize) -> Vec<ProcessInfo> {
-        let mut processes: Vec<_> = self.system.processes()
-            .iter()
-            .map(|(pid, process)| {
-                let cmd_vec: Vec<String> = process.cmd()
-                    .iter()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .collect();
-                let cmd = cmd_vec.join(" ");
-                let cmd_display = if cmd.is_empty() {
-                    process.name().to_string_lossy().to_string()
-                } else {
-                    cmd
-                };
-                
-                ProcessInfo {
-                    pid: pid.as_u32(),
-                    name: process.name().to_string_lossy().to_string(),
-                    cmd: cmd_display,
-                    cpu_usage: process.cpu_usage(),
-                    memory_kb: process.memory(),
-                    user: process.user_id()
-                        .map(|uid| uid.to_string())
-                        .unwrap_or_else(|| "unknown".to_string()),
-                }
-            })
-            .collect();
-
+        let mut processes = self.grouped_processes();
         processes.sort_by(|a, b| b.cpu_usage.partial_cmp(&a.cpu_usage).unwrap());
         processes.truncate(limit);
         processes
     }
 
     pub fn top_processes_by_memory(&self, limit: usize) -> Vec<ProcessInfo> {
-        let mut processes: Vec<_> = self.system.processes()
-            .iter()
-            .map(|(pid, process)| {
-                let cmd_vec: Vec<String> = process.cmd()
-                    .iter()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .collect();
-                let cmd = cmd_vec.join(" ");
-                let cmd_display = if cmd.is_empty() {
-                    process.name().to_string_lossy().to_string()
-                } else {
-                    cmd
-                };
-                
-                ProcessInfo {
-                    pid: pid.as_u32(),
-                    name: process.name().to_string_lossy().to_string(),
-                    cmd: cmd_display,
-                    cpu_usage: process.cpu_usage(),
-                    memory_kb: process.memory(),
-                    user: process.user_id()
-                        .map(|uid| uid.to_string())
-                        .unwrap_or_else(|| "unknown".to_string()),
-                }
-            })
-            .collect();
-
+        let mut processes = self.grouped_processes();
         processes.sort_by(|a, b| b.memory_kb.cmp(&a.memory_kb));
         processes.truncate(limit);
         processes
@@ -162,32 +111,49 @@ impl SystemMetrics {
     
     /// Get all processes as a flat list
     pub fn all_processes(&self) -> Vec<ProcessInfo> {
-        self.system.processes()
-            .iter()
-            .map(|(pid, process)| {
-                let cmd_vec: Vec<String> = process.cmd()
-                    .iter()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .collect();
-                let cmd = cmd_vec.join(" ");
-                let cmd_display = if cmd.is_empty() {
-                    process.name().to_string_lossy().to_string()
-                } else {
-                    cmd
-                };
-                
-                ProcessInfo {
-                    pid: pid.as_u32(),
+        self.grouped_processes()
+    }
+
+    /// Return processes grouped by TGID (thread group), aggregating CPU and memory.
+    fn grouped_processes(&self) -> Vec<ProcessInfo> {
+        let mut grouped: std::collections::HashMap<u32, ProcessInfo> = std::collections::HashMap::new();
+
+        for (pid, process) in self.system.processes() {
+            let cmd_vec: Vec<String> = process
+                .cmd()
+                .iter()
+                .map(|s| s.to_string_lossy().to_string())
+                .collect();
+            let cmd = cmd_vec.join(" ");
+            let cmd_display = if cmd.is_empty() {
+                process.name().to_string_lossy().to_string()
+            } else {
+                cmd
+            };
+
+            let tgid = read_tgid(pid.as_u32()).unwrap_or_else(|| pid.as_u32());
+
+            grouped
+                .entry(tgid)
+                .and_modify(|agg| {
+                    agg.cpu_usage += process.cpu_usage();
+                    agg.memory_kb = agg.memory_kb.saturating_add(process.memory());
+                })
+                .or_insert_with(|| ProcessInfo {
+                    pid: tgid,
+                    tgid,
                     name: process.name().to_string_lossy().to_string(),
                     cmd: cmd_display,
                     cpu_usage: process.cpu_usage(),
                     memory_kb: process.memory(),
-                    user: process.user_id()
+                    user: process
+                        .user_id()
                         .map(|uid| uid.to_string())
                         .unwrap_or_else(|| "unknown".to_string()),
-                }
-            })
-            .collect()
+                });
+        }
+
+        grouped.into_values().collect()
     }
 }
 
@@ -208,6 +174,7 @@ pub struct CpuInfo {
 #[derive(Debug, Clone)]
 pub struct ProcessInfo {
     pub pid: u32,
+    pub tgid: u32,
     pub name: String,
     pub cmd: String,  // Full command line
     pub cpu_usage: f32,
@@ -219,4 +186,16 @@ impl ProcessInfo {
     pub fn memory(&self) -> u64 {
         self.memory_kb
     }
+}
+
+/// Read thread group ID (TGID) from /proc/[pid]/status. Falls back to pid if unavailable.
+fn read_tgid(pid: u32) -> Option<u32> {
+    let status_path = format!("/proc/{}/status", pid);
+    let content = fs::read_to_string(status_path).ok()?;
+    for line in content.lines() {
+        if let Some(rest) = line.strip_prefix("Tgid:") {
+            return rest.trim().parse::<u32>().ok();
+        }
+    }
+    None
 }
