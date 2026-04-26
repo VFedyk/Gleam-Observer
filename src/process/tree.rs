@@ -186,6 +186,7 @@ mod tests {
         let processes = vec![
             ProcessInfo {
                 pid: 1,
+                tgid: 1,
                 name: "init".to_string(),
                 cmd: "init".to_string(),
                 cpu_usage: 0.0,
@@ -194,6 +195,7 @@ mod tests {
             },
             ProcessInfo {
                 pid: 100,
+                tgid: 100,
                 name: "parent".to_string(),
                 cmd: "parent".to_string(),
                 cpu_usage: 10.0,
@@ -202,6 +204,7 @@ mod tests {
             },
             ProcessInfo {
                 pid: 200,
+                tgid: 200,
                 name: "child".to_string(),
                 cmd: "child".to_string(),
                 cpu_usage: 5.0,
