@@ -1,3 +1,8 @@
+#[cfg(target_os = "linux")]
+use std::fs;
+#[cfg(target_os = "linux")]
+use std::path::PathBuf;
+
 use crate::error::{Error, Result};
 use crate::gpu::backend::GPUBackend;
 
