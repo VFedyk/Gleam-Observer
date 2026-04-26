@@ -58,6 +58,16 @@ impl GPUManager {
             }
         }
 
+        #[cfg(all(target_os = "macos", feature = "apple-gpu"))]
+        {
+            use super::apple::AppleBackend;
+            if let Ok(apple_gpus) = AppleBackend::detect_all() {
+                for gpu in apple_gpus {
+                    backends.push(Box::new(gpu));
+                }
+            }
+        }
+
         Self { backends }
     }
 

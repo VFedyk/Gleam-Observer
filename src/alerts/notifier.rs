@@ -1,5 +1,5 @@
 #[cfg(unix)]
-use notify_rust::{Notification, Urgency};
+use notify_rust::Notification;
 
 use super::{Alert, AlertLevel};
 
@@ -19,10 +19,10 @@ impl Notifier {
 
         #[cfg(unix)]
         {
-            let (summary, urgency) = match alert.level {
-                AlertLevel::Critical => ("⚠️ Critical Alert", Urgency::Critical),
-                AlertLevel::Warning => ("⚠ Warning", Urgency::Normal),
-                AlertLevel::Info => ("ℹ Info", Urgency::Low),
+            let summary = match alert.level {
+                AlertLevel::Critical => "⚠️ Critical Alert",
+                AlertLevel::Warning => "⚠ Warning",
+                AlertLevel::Info => "ℹ Info",
             };
 
             let icon = match alert.level {
@@ -31,13 +31,25 @@ impl Notifier {
                 AlertLevel::Info => "dialog-information",
             };
 
-            let _ = Notification::new()
+            let mut notif = Notification::new();
+            notif
                 .summary(&format!("{} - GleamObserver", summary))
                 .body(&alert.message)
                 .icon(icon)
-                .urgency(urgency)
-                .timeout(5000) // 5 seconds
-                .show();
+                .timeout(5000);
+
+            #[cfg(target_os = "linux")]
+            {
+                use notify_rust::Urgency;
+                let urgency = match alert.level {
+                    AlertLevel::Critical => Urgency::Critical,
+                    AlertLevel::Warning => Urgency::Normal,
+                    AlertLevel::Info => Urgency::Low,
+                };
+                notif.urgency(urgency);
+            }
+
+            let _ = notif.show();
         }
 
         #[cfg(not(unix))]

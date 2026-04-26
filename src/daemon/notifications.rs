@@ -3,12 +3,12 @@ use crate::alerts::Alert;
 pub fn send_alert(alert: &Alert) {
     #[cfg(unix)]
     {
-        use notify_rust::{Notification, Urgency};
-        
-        let (summary, urgency) = match alert.level {
-            crate::alerts::AlertLevel::Critical => ("Critical Alert", Urgency::Critical),
-            crate::alerts::AlertLevel::Warning => ("Warning", Urgency::Normal),
-            crate::alerts::AlertLevel::Info => ("Info", Urgency::Low),
+        use notify_rust::Notification;
+
+        let summary = match alert.level {
+            crate::alerts::AlertLevel::Critical => "Critical Alert",
+            crate::alerts::AlertLevel::Warning => "Warning",
+            crate::alerts::AlertLevel::Info => "Info",
         };
 
         let icon = match alert.level {
@@ -17,13 +17,25 @@ pub fn send_alert(alert: &Alert) {
             crate::alerts::AlertLevel::Info => "dialog-information",
         };
 
-        let _ = Notification::new()
+        let mut notif = Notification::new();
+        notif
             .summary(&format!("{} - GleamObserver", summary))
             .body(&alert.message)
             .icon(icon)
-            .urgency(urgency)
-            .timeout(5000)
-            .show();
+            .timeout(5000);
+
+        #[cfg(target_os = "linux")]
+        {
+            use notify_rust::Urgency;
+            let urgency = match alert.level {
+                crate::alerts::AlertLevel::Critical => Urgency::Critical,
+                crate::alerts::AlertLevel::Warning => Urgency::Normal,
+                crate::alerts::AlertLevel::Info => Urgency::Low,
+            };
+            notif.urgency(urgency);
+        }
+
+        let _ = notif.show();
     }
 
     #[cfg(not(unix))]
